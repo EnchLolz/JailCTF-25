@@ -247,4 +247,121 @@ print("DONE")
 
 ## Other Exploration
 
-TODO
+You might have noticed that our code also contains the characters `&` and `|`, Just like `^` we can also use these two characters to determine even/oddness while also being able to recover more numbers via BFS. For `|` we can test parity by doing `x|1 > x`, for `&` we can test parity by doing `x&1`. The only issue with these two characters is that given the random bytes in `_`, sometimes some numbers are not reachable no matter how you combine known numbers. The code for handling this is shown below:
+
+
+```py
+# Test parity for & and | operator
+if op == "&":
+    return "[_]["+getIdx(idx) + ">>[[_]>[]][_>_]"*(7-bit) + "&"+mp[1]+"]"
+    
+if op == "|":
+    return "[_]["+getIdx(idx) + ">>[[_]>[]][_>_]"*(7-bit) + "|"+mp[1]+">"+getIdx(idx) + ">>[[_]>[]][_>_]"*(7-bit)+"]"
+```
+
+
+```py
+# In case some idx couldn't be reached
+if len(notfound) > 0:
+    print("FAILED", notfound)
+    for i in range(len(notfound)*8):
+        p.sendline(b"_")
+        p.recvuntil(b"cmd: ")
+    p.sendline(b"_")
+
+# Submit the secret
+else:
+    p.sendline(b"submit")
+    p.recvuntil(b"lottery numbers? ")
+    payload = bytes(arr).hex().encode()
+    p.sendline(payload)
+    cnt += 1
+    print(cnt)
+```
+
+The problem with this is that since we don't get to increment cnt by 1 consistently, it would take much longer to run. This wouldn't have been a problem, but unfortunately I learned after the contest that there was a timeout of 7777 seconds, which could've explained how this happened.
+
+![Connection Closed at 97%](/images/97percent.png)
+
+Luckily, after getting my connection closed at 97% completion at 2 am, I only had to wait another 2 hours to solve the challenge.
+
+
+Another interesting discovery, although it ended up being not useful for the challenge was the usage of `:`. 
+
+Using `:`, we can easily index the nth element by simply chaining `[1:]`. For example, `_[1:][1:][1:][1:][0]` can get the 4th element of `_`. The more interesting challenge is to be able to find the even and oddness of a number by using `:`. To do this, we can use the fact that we have a string `_` of length 128, then use some funny string slicing tricks. In python we can do string slicing by using `_[start:stop:step]` Thus we can check the even and oddness of an number by doing `_[:x:x>>1]`. In this case if `x` is odd, then the resulting string will have 3 bytes, but if `x` was even it would only have `2`. To see this, lets take for example the number 7, which when divided by 2 would yield 3. Thus, we would get the indicies 0,3,6 since 7 has an extra bit at the end. Instead if we had the number 6. We would get 0,3 but not 6 since that would be too much. Eg:
+
+```py
+>>> [*range(128)][:96:96>>1]
+[0, 48]
+>>> [*range(128)][:97:97>>1]
+[0, 48, 96]
+```
+
+ There are only two problems with this approach. The first problem is that the string we are slicing must have at least length `x` in order to test if `x` is even or odd. Since we are setting the stop index to `x`, if `x` is greater than the length, the stop index just becomes the length of the string. Thus the highest number we can test is `127` Eg:
+
+```py
+>>> [*range(128)][:196:196>>1]
+[0, 98]
+>>> [*range(128)][:197:197>>1]
+[0, 98]
+```
+ 
+The second problem is that this doesn't work when the number you are trying to test is `0` or `1` since the shift would cause the step to be `0` which doesn't make sense. Eg:
+
+```py
+>>> [*range(128)][:2:2>>1]
+[0, 1]
+>>> [*range(128)][:1:1>>1]
+Traceback (most recent call last):
+  File "<stdin>", line 1, in <module>
+ValueError: slice step cannot be zero
+>>> [*range(128)][:0:0>>1]
+Traceback (most recent call last):
+  File "<stdin>", line 1, in <module>
+ValueError: slice step cannot be zero
+```
+
+While this second problem is relatively easy to fix, as we can just test if a number is `0` or `1` by indexing `[_]` with it. Thus we use this technique to locate the MSB of the byte. Then once we know there exists a MSB we can test the rest of the bits with the slicing. However, the first problem can't be fixed which is a problem since each byte takes on a value from `0` to `255`. So in the cases where the random number is greater than `127`, then we have no way to getting the LSB. Here is the failed POC:
+
+```py
+one = "[_]>[]"
+zero = "_>_"
+
+def getIdx(idx):
+    return "_"+"[[_]>[]:]"*idx+"[_>_]"
+
+def genPayload(idx, bit, one):
+    # If MSB is not located yet
+    if one == False:
+        return "[_]["+getIdx(idx)+ ">>[[_]>[]][_>_]"*(7-bit)+"]"
+
+    # Once MSB is located the value will be greater than 1
+    else:
+        shiftedval = getIdx(idx)+ ">>[[_]>[]][_>_]"*(7-bit)
+        return f"_[:{shiftedval}:{shiftedval}>>[[_]>[]][_>_]][[_]>[]:][[_]>[]]"
+
+...
+# Loop
+    arr = [0]*128
+    for i in range(128):
+        one = False
+        value = 0
+        for j in range(8):
+            # send payload
+            p.sendline(genPayload(i, j, one).encode())
+            # logic
+            response = p.recvuntil(b"cmd: ")
+            if not one:
+                if b"ans" in response:
+                    one = True
+                    value |= (1 << (7-j))
+            else:
+                if b"ans" not in response:
+                    value |= (1 << (7-j))
+
+        arr[i] = value
+    print(arr)
+
+```
+
+There are probably more solutions using other characters like `/` or `*`, but at this point the problem has significantly decreased my will to live.
